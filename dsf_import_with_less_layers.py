@@ -193,7 +193,8 @@ for p in dsf.Patches:
                 #    print(normals[-1])
             ti.insert(0, vi)  # winding in Blender is just opposite as in X-Plane
             if len(dsf.V[v[0]][v[1]]) == 7:  # in case of projection we need first uvs do by own unwrapping and use the others as second e.g. for border
-                if projected_uv and p.flag == 1:  # for projected physical mesh; for overlay we would need second uvs for border
+                if not projected_uv and p.flag == 1:  # for projected physical mesh; for overlay we would need second uvs for border
+				    ########### TBD: when projected then map tuvs to vx and vy --> if NOT projected, CORRRECT ????????? ################################
                     tuvs.insert(0, (dsf.V[v[0]][v[1]][5], dsf.V[v[0]][v[1]][6]))
                     tuvs2.insert(0, (vx/100, vy/100))  # add this uv, even if not needed in order to get full uv-mesh for that layer
                 else:  # should only be the case if projected and we have overlay to get uv-map for border
@@ -207,16 +208,16 @@ for p in dsf.Patches:
                 tuvs2.insert(0, (vx/100, vy/100))  # Add uvs even if not needed for that tria but to have full uvs for that layer 
         smallest_index = min(ti)  # make sure that smallest index is first in the list, but keep winding of tria
         if smallest_index == ti[1]:
-            ti = (ti[1], ti[2], ti[0])
+            ti_match = (ti[1], ti[2], ti[0])  ########  CHANGING ORDER WOULD MEAN ALSO TO CHANG ORDER FOR UV --> created ti just for matching in dict !!!!!!! ##########
         elif smallest_index == ti[2]:
-            ti = (ti[2], ti[0], ti[1])
+            ti_match = (ti[2], ti[0], ti[1])
         else:
-            ti = (ti[0], ti[1], ti[2])
-        if ti in tria_layer:  # this tria is already existing
-            tria_layer[ti] += 1  # this new tria has to be pot on next layer
-            layer = tria_layer[ti]
+            ti_match = (ti[0], ti[1], ti[2])
+        if ti_match in tria_layer:  # this tria is already existing
+            tria_layer[ti_match] += 1  # this new tria has to be pot on next layer
+            layer = tria_layer[ti_match]
         else:
-            tria_layer[ti] = 0  # this is first tria which is layer 0 (base mesh)
+            tria_layer[ti_match] = 0  # this is first tria which is layer 0 (base mesh)
             layer = 0    
         if layer >= len(faces):  # We need addtional layer so extend lists
             faces.append([])
@@ -250,16 +251,34 @@ for layer in range(len(faces)):
     col.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
 
-	##### Delete loose vertices: bpy.ops.mesh.delete_loose()
-	bpy.ops.object.mode_set(mode='EDIT')
-	bpy.ops.mesh.delete_loose()
-	bpy.ops.object.mode_set(mode='OBJECT')
+    ##### Delete loose vertices #### TBD: NOT WORKING --> check bpy.ops usage or use bmesh.ops ###########
+    #bpy.ops.object.mode_set(mode='EDIT')
+    #bpy.ops.mesh.delete_loose()
+    #bpy.ops.object.mode_set(mode='OBJECT')
+    if layer > 0:
+        verts_layer = []
+        faces_layer = []
+        normals_layer = []
+        verts_index = dict()
+        for t in faces[layer]:
+            faces_layer.append([])
+            for v in t:
+                if v in verts_index:
+                    faces_layer[-1].append(verts_index[v])
+                else:
+                    verts_layer.append(verts[v])
+                    normals_layer.append(normals[v])
+                    verts_index[v] = len(verts_layer) - 1
+                    faces_layer[-1].append(len(verts_layer) - 1)
+    else:
+        verts_layer = verts
+        faces_layer = faces[layer]
+        normals_layer = normals    #faces[layer] = []  # free memory (if this helps) ...
 
-
-    mesh.from_pydata(verts, edges, faces[layer])
+    mesh.from_pydata(verts_layer, edges, faces_layer)
     mesh.use_auto_smooth = True  # needed to make use of imported normals split
     #mesh.normals_split_custom_set([(0, 0, 0) for l in mesh.loops])
-    mesh.normals_split_custom_set_from_vertices(normals)  # set imported normals as custom split vertex normals    
+    mesh.normals_split_custom_set_from_vertices(normals_layer)  # set imported normals as custom split vertex normals    
 
     # ADDING MATERIALS PER LAYER
     for m in used_materials[layer]:
@@ -282,7 +301,7 @@ for layer in range(len(faces)):
             border_uv.data[loop.index].uv = uvs2[layer][loop.index]
 
     ### Move overlays along z-axis
-    obj.location.z += layer
+    obj.location.z += layer * 0.01
 
     #### TBD: Add to material name "PRJ" if it is projected without actually having uvs, would help export later not to read ter file ##
 
