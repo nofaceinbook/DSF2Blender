@@ -16,7 +16,7 @@
 
 from xplnedsf2 import *
 import bpy
-from bpy.props import BoolProperty, EnumProperty, StringProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty, IntProperty, FloatProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
@@ -36,16 +36,18 @@ dsf_file = 'X:/X-Plane/steamapps/common/X-Plane 11/Custom Scenery/zzzz_MUXP_defa
 
 
 class DSF_loader:
-    def __init__(self):
+    def __init__(self, wb, eb, sb, nb, scl, lp_overlay):
 
-        self.AREA_W = 0.2  # define area from west to east and south to north to be extracted 
-        self.AREA_E = 0.4  # 0 to 1 extracts the full one by on grid
-        self.AREA_S = 0.2  # you could also use the full coordinates like 50.21 or -7.4
-        self.AREA_N = 0.4
+        self.AREA_W = wb  # define area from west to east and south to north to be extracted 
+        self.AREA_E = eb  # 0 to 1 extracts the full one by on grid
+        self.AREA_S = sb  # you could also use the full coordinates like 50.21 or -7.4
+        self.AREA_N = nb
+        
+        self.SCALING = scl
 
-        self.LAYER_PER_OVERLAY = False  # if this is true each overlay terrain will be defined as individual object
+        self.LAYER_PER_OVERLAY = lp_overlay  # if this is true each overlay terrain will be defined as individual object
 
-    def read_ter_file(self, terpath, xppath, dsfpath):
+    def read_ter_file(self, terpath, xppath, dsf_path):
         """
         Reads X-Plane terrain file (.ter) in terpath and returns values as dictionary.
         In case of errors the dict contains key ERROR with value containing description of error.
@@ -53,6 +55,8 @@ class DSF_loader:
         dsfpath is the path of the dsf file that contains the terrain definition. Needed to read dsf specific terrain.
         """
         ter = dict()
+        
+        dsfpath = dsf_path.replace("\\", "/") ############ NEW ######## TBD: USE FILE DELIMITER INDEPENDENT COMMANDS ###########
         
         if terpath == 'terrain_Water':  # No terrian file for Water
             return ter
@@ -83,7 +87,7 @@ class DSF_loader:
                         if len(values) > 0 and values[0].startswith("../"):  # replace relative path with full path
                             filepath = filename[:filename.rfind("/")]  # get just path without name of file in path
                             values[0] = filepath[:filepath.rfind("/") + 1] + values[0][3:]
-                            #print(filename, values[0])
+                            #print("###", filename, values[0])
                             ### TBD: Handle ERROR when '/' is not found; when other delimiters are used
                         ter[key] = values
                     ### TBD: in case of multiple keys in files append new values to existing key
@@ -138,8 +142,9 @@ class DSF_loader:
             ### TBD: Change specular, roughness, transmission to good values for water
         return m
                 
-    def import_process(self, dsf_file):
+    def execute(self, dsf_file):
         print("------------ Starting to use DSF ------------------")
+        print("Reading DSF file: {}".format(dsf_file))
         self.xp_path = 'X:/X-Plane/steamapps/common/X-Plane 11'  ########### TBD: be retrieved from dsf file  ##########
         
         dsf = XPLNEDSF()
@@ -158,6 +163,7 @@ class DSF_loader:
         #### Load all terrain files that dsf file into a dictionary ###
         terrain_details = dict()  # containing per terrain index the details of .ter-file in dict
         for id in dsf.DefTerrains:
+            print("Loading Terrain {}".format(dsf.DefTerrains[id]))
             terrain_details[id] = self.read_ter_file(dsf.DefTerrains[id], self.xp_path, dsf_file)
             if "ERROR" in terrain_details[id]:
                 print(terrain_details[id]["ERROR"])
@@ -219,10 +225,10 @@ class DSF_loader:
                     tuvs2 = []  # 2nd uves for triangle e.g. for borders if existent
                     for v in t:  # this is now index to Pool and to vertex in Pool
                         #### TBD: Scale to Marcartor in order to have same east/west and north/south dimension #####
-                        vx = round((dsf.V[v[0]][v[1]][0] - grid_west) * 1000, 3)
-                        vy = round((dsf.V[v[0]][v[1]][1] - grid_south) * 1000, 3)
+                        vx = round((dsf.V[v[0]][v[1]][0] - grid_west) * self.SCALING, 3)
+                        vy = round((dsf.V[v[0]][v[1]][1] - grid_south) * self.SCALING, 3)
                         vz = dsf.getVertexElevation(dsf.V[v[0]][v[1]][0], dsf.V[v[0]][v[1]][1], dsf.V[v[0]][v[1]][2])
-                        vz = round(vz / 100, 3)  ### TBD: Make stretching of height configureable
+                        vz = round(vz / (100000/self.SCALING), 3)  ### TBD: Make stretching of height configureable
                         if (vx, vy) in coords:
                             vi = coords[(vx, vy)]
                             #### TBD: check if new normal is equal to existing one ###############
@@ -374,7 +380,7 @@ class DSF_loader:
             ### Move overlays along z-axis
             obj.location.z += layer * 0.01
             
-            return {"FINISHED"}
+        return {"FINISHED"}
 
 
 bl_info = {
@@ -403,11 +409,58 @@ class ImportDSF(Operator, ImportHelper):
         default="*.dsf",
         options={'HIDDEN'},
     )
+    
+    east_bound: FloatProperty(
+        name="West bound",
+        description="West boundary, relative to tile (e.g. 0.4) or absolute (-29.6) in degree (0.0 for any west tile border)",
+        min=-180.0, max=180.0,
+        soft_min=0.0, soft_max=1.0,
+        default=0.0,
+    )
+    
+    west_bound: FloatProperty(
+        name="East bound",
+        description="East boundary, relative to tile (e.g. 0.6) or absolute (-29.4) in degree (1.0 for any east tile border)",
+        min=-180.0, max=180.0,
+        soft_min=0.0, soft_max=1.0,
+        default=1.0,
+    )
+    
+    south_bound: FloatProperty(
+        name="South bound",
+        description="South boundary, relative to tile (e.g. 0.4) or absolute (50.4) in degree (0.0 for any south tile border)",
+        min=-90.0, max=90.0,
+        soft_min=0.0, soft_max=1.0,
+        default=0.0,
+    )
+    
+    north_bound: FloatProperty(
+        name="North bound",
+        description="North boundary, relative to tile (e.g. 0.6) or absolute (50.6) in degree (1.0 for any nord tile border)",
+        min=-90.0, max=90.0,
+        soft_min=0.0, soft_max=1.0,
+        default=1.0,
+    )
+        
+    
+    scaling: IntProperty(
+        name="Scaleing",
+        default=1000,
+        description="Multiplier for degree tile",
+        min=1,
+        max=100000,
+    )
+    
+    seperate_overlays: BoolProperty(
+        name="Overlay per Terrain Type",
+        description="Create seperate overlays per terrain type",
+        default=False
+    )
 
     def execute(self, context):
         """Executes the import process """
-        importer = DSF_loader()
-        return importer.import_process(self.filepath)
+        importer = DSF_loader(self.east_bound, self.west_bound, self.south_bound, self.north_bound, self.scaling, self.seperate_overlays)
+        return importer.execute(self.filepath)
 
 
 def menu_func_import(self, context):
